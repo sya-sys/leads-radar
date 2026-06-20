@@ -32,6 +32,13 @@ Fields to extract per posting:
 - source: keep the original value
 - url: keep the original URL
 
+CRITICAL PRIORITY RULES:
+- If "Title:" is non-empty → use it EXACTLY as job_title (do not modify or extend it)
+- If "Company:" is non-empty → use it EXACTLY as company_name
+- If "Location:" is non-empty → use it EXACTLY as location (already parsed — trust it)
+- Only extract from Description when the above fields are empty
+- Never copy page boilerplate (offer IDs, "| France Travail", "| Hellowork") into any field
+
 Return ONLY a valid JSON array, no explanation, no markdown fences.
 
 POSTINGS:
