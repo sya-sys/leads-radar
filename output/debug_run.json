@@ -1,9 +1,9 @@
 {
   "raw_count": 80,
   "structured_count": 80,
-  "haiku_ok": false,
-  "active_model": "all models failed",
-  "haiku_errors": [],
+  "gemini_ok": false,
+  "active_model": "404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelServ",
+  "gemini_errors": [],
   "sources": {
     "linkedin": 50,
     "tavily": 30
