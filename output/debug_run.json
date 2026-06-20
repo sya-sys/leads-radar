@@ -1,11 +1,11 @@
 {
-  "raw_count": 80,
-  "structured_count": 80,
+  "raw_count": 70,
+  "structured_count": 70,
   "gemini_ok": true,
   "active_model": "gemini-2.0-flash",
   "errors": [],
   "sources": {
     "linkedin": 50,
-    "tavily": 30
+    "tavily": 20
   }
 }

@@ -1,7 +1,7 @@
 {
-  "total": 80,
+  "total": 70,
   "by_source": {
     "linkedin": 50,
-    "tavily": 30
+    "tavily": 20
   }
 }
