@@ -1,52 +1,29 @@
-# .github/workflows/leads_radar.yml
-# ────────────────────────────────────
-# This file tells GitHub Actions to run the leads radar every day at 06:00 UTC.
-#
-# HOW GITHUB ACTIONS WORKS (plain English):
-#   - GitHub has servers (called "runners") that can run code on a schedule.
-#   - This YAML file describes: when to run, what machine to use, what commands to run.
-#   - Secrets (API keys) are stored in your repo's Settings → Secrets and variables → Actions.
-#   - After each run, new leads in output/leads.csv are committed back to the repo
-#     so the file accumulates over time.
-#
-# SCHEDULE:
-#   "0 6 * * *" = every day at 06:00 UTC (08:00 Paris time, 09:00 in summer).
-
 name: Leads Radar
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # daily at 06:00 UTC
-
-  # Allows you to trigger a run manually from the GitHub Actions tab
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:
   run-radar:
-    runs-on: ubuntu-latest   # free GitHub-hosted Linux runner
-
+    runs-on: ubuntu-latest
     permissions:
-      contents: write        # needed so the runner can commit leads.csv back to the repo
+      contents: write
 
     steps:
-      # ── 1. Check out the repo ───────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Set up Python 3.11 ───────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"           # caches pip downloads between runs (faster)
+          cache: "pip"
 
-      # ── 3. Install dependencies ─────────────────────────────────────────────
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Run the agent ────────────────────────────────────────────────────
-      # Secrets are injected as environment variables.
-      # They never appear in logs — GitHub masks them automatically.
       - name: Run leads radar
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
@@ -57,12 +34,11 @@ jobs:
           DRY_RUN: "false"
         run: python -m src.main
 
-      # ── 5. Commit updated leads.csv back to the repo ────────────────────────
-      # Only commits if the file exists and has changed (no-op if 0 new leads).
       - name: Commit leads.csv
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output/leads.csv 2>/dev/null || true
           git diff --cached --quiet && echo "No new leads — nothing to commit." || \
-            git commit -m "chore: update leads.csv [skip 
+            git commit -m "chore: update leads.csv [skip ci]"
+          git push || true
