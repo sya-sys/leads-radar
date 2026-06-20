@@ -2,7 +2,7 @@
 httpx==0.27.0
 
 # ── Anthropic SDK (Claude Haiku extraction) ───────────────────────────────────
-anthropic==0.28.0
+google-generativeai>=0.7.0
 
 # ── LangGraph (extract → dedupe → output pipeline) ───────────────────────────
 langgraph==0.1.5

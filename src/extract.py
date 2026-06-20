@@ -1,19 +1,21 @@
 """
 src/extract.py
 ───────────────
-LangGraph node: raw job postings → Claude Haiku → structured leads.
+LangGraph node: raw job postings → Gemini Flash → structured leads.
+
+Uses google-generativeai (free tier via Google AI Studio).
+Falls back to keyword classification if Gemini is unavailable.
 """
 
 import json
 import logging
 import os
 
-import anthropic
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
-HAIKU_FALLBACK = "claude-3-5-haiku-20241022"
+GEMINI_MODEL = "gemini-1.5-flash"
 SIGNAL_TYPES = ["treasury hire", "payments hire", "AI/fintech hire"]
 
 EXTRACTION_PROMPT = """\
@@ -41,17 +43,17 @@ Extract these exact fields:
 Rules:
 - If a field is unclear, use an empty string.
 - signal_type must be exactly one of the three options.
-- Return ONLY a JSON object, no explanation, no markdown.
+- Return ONLY a JSON object, no explanation, no markdown fences.
 
 JSON:"""
 
 
 def _classify_signal(title: str, description: str) -> str:
-    """Keyword fallback when Haiku is unavailable."""
+    """Keyword fallback when Gemini is unavailable."""
     text = (title + " " + description).lower()
-    if any(w in text for w in ["treasury", "tresorier", "trésorier", "cash management", "iso 20022"]):
+    if any(w in text for w in ["treasury", "tresorier", "trésorier", "cash management", "iso 20022", "tresorerie"]):
         return "treasury hire"
-    if any(w in text for w in ["payment", "paiement", "psp", "acquiring", "sepa", "open banking"]):
+    if any(w in text for w in ["payment", "paiement", "psp", "acquiring", "sepa", "open banking", "fintech"]):
         return "payments hire"
     return "AI/fintech hire"
 
@@ -60,65 +62,61 @@ def extract_node(state: dict) -> dict:
     """LangGraph node: reads raw_leads, writes leads."""
     raw_leads = state.get("raw_leads", [])
 
-    # Test Anthropic API once before processing all leads
-    haiku_ok, active_model = _test_haiku()
-    if not haiku_ok:
-        logger.warning("Haiku unavailable (%s) — using keyword fallback for all %d leads", active_model, len(raw_leads))
+    gemini_ok, active_model, client = _init_gemini()
+    if not gemini_ok:
+        logger.warning("Gemini unavailable (%s) — using keyword fallback for %d leads", active_model, len(raw_leads))
 
-    client = anthropic.Anthropic() if haiku_ok else None
     structured = []
-    haiku_errors = []
+    gemini_errors = []
 
     for raw in raw_leads:
-        lead = _extract_one(client, active_model, raw, haiku_errors) if haiku_ok else _fallback(raw)
+        lead = _extract_one(client, raw, gemini_errors) if gemini_ok else _fallback(raw)
         if lead:
             structured.append(lead)
 
-    logger.info("Extraction complete: %d/%d leads structured (haiku_ok=%s)", len(structured), len(raw_leads), haiku_ok)
-    if haiku_errors:
-        logger.warning("First Haiku error: %s", haiku_errors[0])
+    logger.info("Extraction: %d/%d leads structured (gemini_ok=%s model=%s)", len(structured), len(raw_leads), gemini_ok, active_model)
+    if gemini_errors:
+        logger.warning("First Gemini error: %s", gemini_errors[0])
 
-    # Write debug file so we can inspect via git
-    _write_debug(raw_leads, structured, haiku_ok, active_model, haiku_errors)
-
+    _write_debug(raw_leads, structured, gemini_ok, active_model, gemini_errors)
     return {**state, "leads": structured}
 
 
-def _test_haiku() -> tuple[bool, str]:
-    """Quick API test — returns (ok, working_model_or_error)."""
-    client = anthropic.Anthropic()
-    for model in [HAIKU_MODEL, HAIKU_FALLBACK]:
-        try:
-            client.messages.create(
-                model=model,
-                max_tokens=5,
-                messages=[{"role": "user", "content": "ok"}],
-            )
-            logger.info("Haiku API test: OK (model=%s)", model)
-            return True, model
-        except Exception as exc:
-            logger.error("Haiku model %s FAILED: %s", model, exc)
-    return False, "all models failed"
+def _init_gemini() -> tuple[bool, str, object]:
+    """Configure Gemini and verify connectivity. Returns (ok, model_or_error, client)."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return False, "GEMINI_API_KEY not set", None
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        # Quick connectivity test
+        model.generate_content("ok", generation_config={"max_output_tokens": 5})
+        logger.info("Gemini API test: OK (model=%s)", GEMINI_MODEL)
+        return True, GEMINI_MODEL, model
+    except Exception as exc:
+        logger.error("Gemini init FAILED: %s", exc)
+        return False, str(exc)[:120], None
 
 
-def _extract_one(client, model: str, raw: dict, errors: list) -> dict | None:
+def _extract_one(model, raw: dict, errors: list) -> dict:
+    """Call Gemini to extract one lead. Falls back to keyword on failure."""
     try:
         prompt = EXTRACTION_PROMPT.format(
             raw_title=raw.get("raw_title", ""),
             raw_company=raw.get("raw_company", ""),
             raw_location=raw.get("raw_location", ""),
             raw_date=raw.get("raw_date", ""),
-            raw_description=raw.get("raw_description", ""),
+            raw_description=raw.get("raw_description", "")[:800],
             source=raw.get("source", ""),
             url=raw.get("url", ""),
             signal_types=", ".join(SIGNAL_TYPES),
         )
-        message = client.messages.create(
-            model=model,
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}],
+        response = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 256, "temperature": 0},
         )
-        raw_json = message.content[0].text.strip()
+        raw_json = response.text.strip().strip("```json").strip("```").strip()
         lead = json.loads(raw_json)
         if lead.get("signal_type") not in SIGNAL_TYPES:
             lead["signal_type"] = "AI/fintech hire"
@@ -126,12 +124,12 @@ def _extract_one(client, model: str, raw: dict, errors: list) -> dict | None:
     except Exception as exc:
         if not errors:
             errors.append(str(exc))
-        logger.warning("Extraction failed for '%s': %s", raw.get("raw_title"), exc)
-        return _fallback(raw)   # fallback so we never lose a lead
+        logger.warning("Gemini extraction failed for '%s': %s", raw.get("raw_title"), exc)
+        return _fallback(raw)
 
 
 def _fallback(raw: dict) -> dict:
-    """Build a structured lead from raw fields without Haiku."""
+    """Build a structured lead from raw fields without Gemini."""
     return {
         "company_name": raw.get("raw_company", ""),
         "job_title": raw.get("raw_title", ""),
@@ -143,24 +141,22 @@ def _fallback(raw: dict) -> dict:
     }
 
 
-def _write_debug(raw_leads, structured, haiku_ok, active_model, haiku_errors):
-    """Write debug_run.json next to leads.csv for post-run inspection."""
+def _write_debug(raw_leads, structured, gemini_ok, active_model, gemini_errors):
     try:
         debug_path = os.path.join(os.path.dirname(__file__), "..", "output", "debug_run.json")
         os.makedirs(os.path.dirname(debug_path), exist_ok=True)
-        summary = {
-            "raw_count": len(raw_leads),
-            "structured_count": len(structured),
-            "haiku_ok": haiku_ok,
-            "active_model": active_model,
-            "haiku_errors": haiku_errors[:3],
-            "sources": {},
-        }
+        sources = {}
         for r in raw_leads:
             s = r.get("source", "unknown")
-            summary["sources"][s] = summary["sources"].get(s, 0) + 1
+            sources[s] = sources.get(s, 0) + 1
         with open(debug_path, "w") as f:
-            json.dump(summary, f, indent=2)
-        logger.info("Debug summary written to %s", debug_path)
+            json.dump({
+                "raw_count": len(raw_leads),
+                "structured_count": len(structured),
+                "gemini_ok": gemini_ok,
+                "active_model": active_model,
+                "gemini_errors": gemini_errors[:3],
+                "sources": sources,
+            }, f, indent=2)
     except Exception as exc:
         logger.warning("Could not write debug file: %s", exc)
