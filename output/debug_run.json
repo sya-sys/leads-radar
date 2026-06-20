@@ -1,9 +1,9 @@
 {
   "raw_count": 80,
   "structured_count": 80,
-  "gemini_ok": false,
-  "active_model": "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more info",
-  "gemini_errors": [],
+  "gemini_ok": true,
+  "active_model": "gemini-2.0-flash",
+  "errors": [],
   "sources": {
     "linkedin": 50,
     "tavily": 30
