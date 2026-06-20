@@ -77,6 +77,7 @@ def _fingerprint(lead: dict) -> str:
         lead.get("company_name", "").strip().lower(),
         lead.get("job_title", "").strip().lower(),
         lead.get("posting_date", "").strip(),
+        lead.get("url", "").strip(),
     ])
     return hashlib.sha256(key.encode()).hexdigest()
 

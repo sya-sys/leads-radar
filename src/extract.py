@@ -114,7 +114,7 @@ def _batch_extract(client, raw_leads: list[dict]) -> tuple[list[dict], str | Non
                 raw_company=raw.get("raw_company", ""),
                 raw_location=raw.get("raw_location", ""),
                 raw_date=raw.get("raw_date", ""),
-                raw_description=raw.get("raw_description", "")[:400],  # shorter to fit context
+                raw_description=raw.get("raw_description", "")[:800],  # enough for company/location
                 source=raw.get("source", ""),
                 url=raw.get("url", ""),
             )
