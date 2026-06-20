@@ -13,7 +13,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ACTOR_ID = "curious_coder/linkedin-jobs-scraper"
+ACTOR_ID = "curious_coder~linkedin-jobs-scraper"
 BASE_URL = "https://api.apify.com/v2"
 
 # LinkedIn Jobs search URLs — last 24 hours (f_TPR=r86400), France.

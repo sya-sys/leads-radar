@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ACTOR_ID = "curious_coder/hellowork-scraper"
+ACTOR_ID = "curious_coder~hellowork-scraper"
 BASE_URL = "https://api.apify.com/v2"
 
 KEYWORDS = [

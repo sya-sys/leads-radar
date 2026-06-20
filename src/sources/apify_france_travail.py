@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ACTOR_ID = "drobnikj/france-travail-scraper"
+ACTOR_ID = "drobnikj~france-travail-scraper"
 BASE_URL = "https://api.apify.com/v2"
 
 # France Travail-specific keywords (more French-language weighted)
