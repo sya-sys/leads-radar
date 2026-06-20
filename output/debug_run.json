@@ -1,0 +1,10 @@
+{
+  "raw_count": 80,
+  "structured_count": 80,
+  "haiku_ok": false,
+  "haiku_errors": [],
+  "sources": {
+    "linkedin": 50,
+    "tavily": 30
+  }
+}
