@@ -5,23 +5,13 @@ Two-phase Tavily strategy:
   1. Search for treasury/payments jobs on France Travail and HelloWork
   2. Filter results to individual offer URLs only (drop aggregator pages)
   3. Use Tavily extract() on individual URLs to get full page content
-     → richer data for company name, location, exact title
-
-Individual offer URLs we keep:
-  - francetravail.fr/offres/recherche/detail/XXXXXX
-  - hellowork.com/fr-fr/emplois/NNNNNNN.html
-
-Everything else (Glassdoor, Indeed search pages, LinkedIn search pages,
-jooble, etc.) is dropped.
 
 Title parsing:
   France Travail: "Offre d'emploi {TITLE} - {DEPT} - {CITY} - {ID}"
-    → raw_location = CITY
-    → raw_title = TITLE
-  HelloWork:      "Offre Emploi {CONTRACT} {TITLE} {CITY} ({CODE}) - Recrutement par {COMPANY} | Hellowork"
-    → raw_company = COMPANY
-    → raw_location = CITY
-    → raw_title = clean job title
+    → raw_location = CITY, raw_title = TITLE
+  HelloWork: "Offre Emploi {CONTRACT} {TITLE} {CITY} ({CODE}) - Recrutement par {COMPANY} | Hellowork"
+    → raw_company = COMPANY, raw_title = cleaned title (city included for Gemini)
+    → raw_location = "" (Gemini extracts from title/description)
 """
 
 import logging
@@ -31,7 +21,6 @@ from tavily import TavilyClient
 
 logger = logging.getLogger(__name__)
 
-# Search queries targeting individual job offer pages
 SEARCH_QUERIES = [
     "site:candidat.francetravail.fr/offres/recherche/detail tresorier",
     "site:candidat.francetravail.fr/offres/recherche/detail responsable tresorerie",
@@ -44,16 +33,13 @@ SEARCH_QUERIES = [
 
 RESULTS_PER_QUERY = 5
 
-# URL patterns that indicate an INDIVIDUAL job offer
 INDIVIDUAL_OFFER_PATTERNS = [
     r"candidat\.francetravail\.fr/offres/recherche/detail/[A-Z0-9]+$",
     r"hellowork\.com/fr-fr/emplois/\d+\.html$",
 ]
 
-# URL substrings to drop (aggregator/list pages)
 AGGREGATOR_SUBSTRINGS = [
     "/emploi/metier_",
-    "/emploi-?",
     "glassdoor.com",
     "indeed.com",
     "jooble.org",
@@ -65,11 +51,8 @@ AGGREGATOR_SUBSTRINGS = [
     "efinancialcareers",
     "iso20022.org",
     "francefintech.org",
-    "hsfkramer.com",
-    "eufintechs.com",
-    "operatechventures.com",
-    "/entreprises/",           # HelloWork company pages (not individual offers)
-    "hellowork.com/fr-fr/emploi/",  # HelloWork aggregator listing
+    "/entreprises/",
+    "hellowork.com/fr-fr/emploi/",
 ]
 
 
@@ -88,89 +71,71 @@ def _is_aggregator(url: str) -> bool:
 
 
 def _parse_francetravail_title(title: str) -> dict:
+    """Parse France Travail offer title into job title and location.
+    Format: "Offre d'emploi {JOB} - {DEPT} - {CITY} - {OFFER_ID}"
     """
-    France Travail format:
-      "Offre d'emploi {JOB TITLE} - {DEPT_CODE} - {CITY} - {OFFER_ID}"
-      "Offre n° {ID} {JOB TITLE}"
-
-    Returns dict with parsed_title and location.
-    """
-    # Strip the "Offre d'emploi " or "Offre n° XXXXXX " prefix
-    parsed_title = title
-    location = ""
-
-    # Pattern: "Offre d'emploi JOB - DEPT - CITY - ID"
+    # Pattern with dept code + city + offer ID
     m = re.match(
         r"Offre[s]? d.emploi\s+(.+?)\s+-\s+(\d{2,3})\s+-\s+([^-]+?)\s+-\s+[A-Z0-9]+$",
         title, re.IGNORECASE
     )
     if m:
-        parsed_title = m.group(1).strip()
-        location = m.group(3).strip()
-        return {"parsed_title": parsed_title, "location": location}
+        city = m.group(3).strip()
+        # Reject if city looks like an offer ID (all caps + digits)
+        if not re.match(r'^[A-Z0-9]+$', city):
+            return {"parsed_title": m.group(1).strip(), "location": city}
+        return {"parsed_title": m.group(1).strip(), "location": ""}
 
-    # Pattern: "Offre d'emploi JOB - DEPT - CITY" (no trailing ID)
+    # Pattern without offer ID at end
     m = re.match(
         r"Offre[s]? d.emploi\s+(.+?)\s+-\s+(\d{2,3})\s+-\s+(.+)$",
         title, re.IGNORECASE
     )
     if m:
-        parsed_title = m.group(1).strip()
-        location = m.group(3).strip()
-        return {"parsed_title": parsed_title, "location": location}
+        city = m.group(3).strip()
+        if not re.match(r'^[A-Z0-9]+$', city):
+            return {"parsed_title": m.group(1).strip(), "location": city}
+        return {"parsed_title": m.group(1).strip(), "location": ""}
 
-    # Pattern: "Offre n° ID TITLE"
+    # "Offre n° ID TITLE"
     m = re.match(r"Offre\s+n°\s+[A-Z0-9]+\s+(.+)", title, re.IGNORECASE)
     if m:
-        parsed_title = m.group(1).strip()
-        return {"parsed_title": parsed_title, "location": location}
+        return {"parsed_title": m.group(1).strip(), "location": ""}
 
-    # Minimal strip: remove "Offre d'emploi " prefix
     parsed_title = re.sub(r"^Offre[s]? d.emploi\s+", "", title, flags=re.IGNORECASE).strip()
-    return {"parsed_title": parsed_title, "location": location}
+    return {"parsed_title": parsed_title, "location": ""}
 
 
 def _parse_hellowork_title(title: str) -> dict:
+    """Extract company and clean job title from a HelloWork offer title.
+    City is kept in the title — Gemini extracts it from title/description.
     """
-    HelloWork format (varies):
-      "Offre Emploi {CONTRACT} {TITLE} {CITY} ({DEPT}) - Recrutement par {COMPANY} | Hellowork"
-      "{TITLE} {CITY} ({DEPT}) - {COMPANY} - Hellowork"
-      "{TITLE} - Hellowork"
-
-    Returns dict with parsed_title, company, location.
-    """
-    parsed_title = title
     company = ""
-    location = ""
 
-    # Extract company: "par X | Hellowork" or "par X" or just before "| Hellowork"
-    company_match = re.search(r"(?:par|by)\s+([^|\-]+?)(?:\s*\|\s*Hellowork|$)", title, re.IGNORECASE)
+    # Extract company: "Recrutement par X | Hellowork" or "par X" near end
+    company_match = re.search(
+        r'(?:par|by)\s+([^|\-]+?)(?:\s*\|\s*Hellowork|$)', title, re.IGNORECASE
+    )
     if company_match:
         company = company_match.group(1).strip()
 
-    # Extract location: "CITY (75)" or "CITY (75000)"
-    loc_match = re.search(r"([\w\s-]+?)\s*\(\d{2,5}\)", title)
-    if loc_match:
-        location = loc_match.group(1).strip()
-        # Clean "Paris 8e" → "Paris"
-        location = re.sub(r"\s+\d+e?$", "", location).strip()
+    # Clean title: strip boilerplate prefix/suffix
+    parsed_title = re.sub(
+        r'^Offre\s+Emploi\s+(?:CDI|CDD|Alternance|Stage|Int[ée]rim)?\s*',
+        '', title, flags=re.IGNORECASE
+    ).strip()
+    parsed_title = re.sub(
+        r'\s*-\s*Recrutement\s+par\s+.+?(?:\s*\|.*)?$',
+        '', parsed_title, flags=re.IGNORECASE
+    ).strip()
+    parsed_title = re.sub(r'\s*\|\s*Hellowork.*$', '', parsed_title, flags=re.IGNORECASE).strip()
+    parsed_title = re.sub(r'\s*\(\d{2,5}\).*$', '', parsed_title).strip()
+    parsed_title = re.sub(r'\s+H/F\s*$', '', parsed_title, flags=re.IGNORECASE).strip()
 
-    # Clean the title: remove standard HelloWork prefixes and suffixes
-    parsed_title = re.sub(r"^Offre\s+Emploi\s+(?:CDI|CDD|Alternance|Stage|Intérim)?\s*", "", title, flags=re.IGNORECASE).strip()
-    parsed_title = re.sub(r"\s*-\s*Recrutement\s+par\s+.+?(?:\s*\|.*)?$", "", parsed_title, flags=re.IGNORECASE).strip()
-    parsed_title = re.sub(r"\s*\|\s*Hellowork.*$", "", parsed_title, flags=re.IGNORECASE).strip()
-    parsed_title = re.sub(r"\s*\(\d{2,5}\).*$", "", parsed_title).strip()  # remove "(75) ..."
-    # Remove trailing city name if already extracted
-    if location and parsed_title.lower().endswith(location.lower()):
-        parsed_title = parsed_title[:-len(location)].strip().rstrip(" -")
-    # Remove trailing H/F markers
-    parsed_title = re.sub(r"\s+H/F\s*$", "", parsed_title, flags=re.IGNORECASE).strip()
-
-    return {"parsed_title": parsed_title, "company": company, "location": location}
+    return {"parsed_title": parsed_title, "company": company, "location": ""}
 
 
 def fetch(tavily_key: str) -> list[dict]:
-    """Search Tavily and return individual job offer leads. Returns [] on error."""
     try:
         return _run(tavily_key)
     except Exception as exc:
@@ -181,8 +146,8 @@ def fetch(tavily_key: str) -> list[dict]:
 def _run(api_key: str) -> list[dict]:
     client = TavilyClient(api_key=api_key)
 
-    # Phase 1: search — collect individual offer URLs
-    individual_urls = {}  # url → search_result dict
+    # Phase 1: search for individual offer URLs
+    individual_urls: dict[str, dict] = {}
 
     for query in SEARCH_QUERIES:
         try:
@@ -207,19 +172,18 @@ def _run(api_key: str) -> list[dict]:
     if not individual_urls:
         return []
 
-    # Phase 2: extract — get full page content for individual offers
-    urls_to_extract = list(individual_urls.keys())[:20]  # cap at 20
-    extracted = {}
+    # Phase 2: extract full page content
+    urls_to_extract = list(individual_urls.keys())[:20]
+    extracted: dict[str, dict] = {}
 
     try:
         extract_resp = client.extract(urls=urls_to_extract)
         extracted = {r.get("url", ""): r for r in extract_resp.get("results", [])}
-        logger.info("Tavily extract: %d/%d pages extracted",
-                    len(extracted), len(urls_to_extract))
+        logger.info("Tavily extract: %d/%d pages extracted", len(extracted), len(urls_to_extract))
     except Exception as exc:
         logger.warning("Tavily extract failed, using search snippets: %s", exc)
 
-    # Phase 3: build leads with parsed metadata
+    # Phase 3: build structured leads
     results = []
     for url in urls_to_extract:
         search_data = individual_urls[url]
@@ -228,11 +192,10 @@ def _run(api_key: str) -> list[dict]:
         title = search_data.get("title", "")
         content = extract_data.get("raw_content", "") or search_data.get("content", "")
 
-        # Parse structured metadata from title
         if "francetravail.fr" in url:
             parsed = _parse_francetravail_title(title)
             raw_title = parsed["parsed_title"]
-            raw_company = ""  # not in France Travail titles
+            raw_company = ""
             raw_location = parsed["location"]
         elif "hellowork.com" in url:
             parsed = _parse_hellowork_title(title)
