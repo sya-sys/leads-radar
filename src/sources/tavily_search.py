@@ -118,6 +118,17 @@ def _parse_francetravail_title(title: str) -> dict:
     if m:
         return {"parsed_title": m.group(1).strip(), "location": ""}
 
+    # "TITLE - CITY - OFFER_ID" (no dept code, e.g. Monaco postings)
+    m = re.match(r"(.+?)\s+-\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s-]{2,20})\s+-\s+(\d{3}[A-Z0-9]+)$", title)
+    if m:
+        city = m.group(2).strip()
+        return {"parsed_title": m.group(1).strip(), "location": city}
+
+    # "TITLE - OFFER_ID" (just strip dangling offer ID from title)
+    m = re.match(r"(.+?)\s+-\s+(\d{3}[A-Z0-9]+)$", title)
+    if m:
+        return {"parsed_title": m.group(1).strip(), "location": ""}
+
     parsed_title = re.sub(r"^Offre[s]? d.emploi\s+", "", title, flags=re.IGNORECASE).strip()
     return {"parsed_title": parsed_title, "location": ""}
 
