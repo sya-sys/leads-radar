@@ -2,7 +2,7 @@
   "raw_count": 80,
   "structured_count": 80,
   "gemini_ok": false,
-  "active_model": "404 models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelServ",
+  "active_model": "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more info",
   "gemini_errors": [],
   "sources": {
     "linkedin": 50,
