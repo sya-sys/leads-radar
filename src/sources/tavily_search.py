@@ -19,13 +19,21 @@ from tavily import TavilyClient
 logger = logging.getLogger(__name__)
 
 # Search queries — phrased as natural-language questions to get better Tavily results.
+# Covers LinkedIn, France Travail, HelloWork, and general web.
 QUERIES = [
+    # General open-web
     "treasury director job posting France 2026",
     "trésorier groupe recrutement France 2026",
     "head of payments PSP job France 2026",
     "fintech SEPA PSD3 open position France",
     "cash management ISO 20022 hire France",
     "open banking embedded finance job Paris",
+    # France Travail (formerly Pôle Emploi) specific
+    "site:francetravail.fr trésorier paiements recrutement",
+    "site:francetravail.fr responsable paiements fintech",
+    # HelloWork specific
+    "site:hellowork.com trésorier responsable paiements France",
+    "site:hellowork.com head payments treasury France",
 ]
 
 # How many web results to fetch per query (Tavily max is 10)
@@ -63,13 +71,4 @@ def _search(api_key: str) -> list[dict]:
                 "raw_title": result.get("title", ""),
                 "raw_company": "",            # unknown at this stage — Haiku will extract
                 "raw_location": "",           # unknown at this stage
-                "raw_date": result.get("published_date", ""),
-                "raw_description": result.get("content", "")[:1000],
-                "source": "tavily",
-                "url": result.get("url", ""),
-            })
-
-        logger.info("Tavily: query='%s' → %d results", query, len(response.get("results", [])))
-
-    logger.info("Tavily: fetched %d total results", len(all_results))
-    return all_results
+             

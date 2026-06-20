@@ -58,12 +58,11 @@ jobs:
         run: python -m src.main
 
       # ── 5. Commit updated leads.csv back to the repo ────────────────────────
-      # This runs even if 0 new leads were found (git commit will be a no-op then).
+      # Only commits if the file exists and has changed (no-op if 0 new leads).
       - name: Commit leads.csv
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/leads.csv
-          # "|| true" means: don't fail if there's nothing new to commit
-          git commit -m "chore: update leads.csv [skip ci]" || true
-          git push
+          git add output/leads.csv 2>/dev/null || true
+          git diff --cached --quiet && echo "No new leads — nothing to commit." || \
+            git commit -m "chore: update leads.csv [skip 

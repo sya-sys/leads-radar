@@ -23,30 +23,27 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# This is the public Apify actor ID for LinkedIn Jobs scraping.
-# You can view it at: https://apify.com/bebity/linkedin-jobs-scraper
-ACTOR_ID = "bebity/linkedin-jobs-scraper"
+# Apify actor for LinkedIn Jobs (URL-based, no login required).
+# https://apify.com/curious_coder/linkedin-jobs-scraper
+ACTOR_ID = "curious_coder/linkedin-jobs-scraper"
 
 # Apify REST base URL
 BASE_URL = "https://api.apify.com/v2"
 
-# Keywords we want to search for on LinkedIn Jobs.
-# Keep this list short — each keyword = API calls.
-KEYWORDS = [
-    "treasury director",
-    "trésorier groupe",
-    "head of payments",
-    "responsable paiements",
-    "fintech PSP",
-    "ISO 20022",
-    "SEPA open banking",
+# LinkedIn Jobs search URLs — last 24 hours (f_TPR=r86400), France.
+# To regenerate: open LinkedIn Jobs in incognito, apply filters, copy URL.
+SEARCH_URLS = [
+    "https://www.linkedin.com/jobs/search/?keywords=treasury+director&location=France&f_TPR=r86400",
+    "https://www.linkedin.com/jobs/search/?keywords=head+of+payments&location=France&f_TPR=r86400",
+    "https://www.linkedin.com/jobs/search/?keywords=tr%C3%A9sorier+groupe&location=France&f_TPR=r86400",
+    "https://www.linkedin.com/jobs/search/?keywords=responsable+paiements&location=France&f_TPR=r86400",
+    "https://www.linkedin.com/jobs/search/?keywords=fintech+PSP&location=France&f_TPR=r86400",
+    "https://www.linkedin.com/jobs/search/?keywords=ISO+20022&location=France&f_TPR=r86400",
+    "https://www.linkedin.com/jobs/search/?keywords=SEPA+open+banking&location=France&f_TPR=r86400",
 ]
 
-# We only care about France for now.
-LOCATION = "France"
-
-# Max results per keyword. 5 × 7 keywords = 35 LinkedIn results per run.
-RESULTS_PER_KEYWORD = 5
+# Total jobs to scrape across all URLs in one actor run.
+MAX_RESULTS = 50
 
 
 def fetch(apify_token: str) -> list[dict]:
@@ -68,48 +65,46 @@ def fetch(apify_token: str) -> list[dict]:
 def _run_actor(token: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}"}
 
+    # ── Step 1: Start a single actor run with all search URLs ─────────────────
+    run_resp = httpx.post(
+        f"{BASE_URL}/acts/{ACTOR_ID}/runs",
+        headers=headers,
+        json={
+            "urls": SEARCH_URLS,
+            "count": MAX_RESULTS,
+            "scrapeCompany": False,   # skip company details to run faster
+        },
+        timeout=30,
+    )
+    run_resp.raise_for_status()
+    run_id = run_resp.json()["data"]["id"]
+    logger.info("LinkedIn actor started | run_id=%s | urls=%d", run_id, len(SEARCH_URLS))
+
+    # ── Step 2: Poll until the run finishes ───────────────────────────────────
+    _wait_for_run(run_id, headers)
+
+    # ── Step 3: Fetch results from the run's dataset ──────────────────────────
+    dataset_resp = httpx.get(
+        f"{BASE_URL}/actor-runs/{run_id}/dataset/items",
+        headers=headers,
+        params={"format": "json"},
+        timeout=30,
+    )
+    dataset_resp.raise_for_status()
+    items = dataset_resp.json()
+
+    # ── Step 4: Normalize to our standard shape ───────────────────────────────
     all_results = []
-
-    for keyword in KEYWORDS:
-        # ── Step 1: Start the actor run ───────────────────────────────────────
-        run_resp = httpx.post(
-            f"{BASE_URL}/acts/{ACTOR_ID}/runs",
-            headers=headers,
-            json={
-                "queries": keyword,
-                "location": LOCATION,
-                "maxResults": RESULTS_PER_KEYWORD,
-            },
-            timeout=30,
-        )
-        run_resp.raise_for_status()
-        run_id = run_resp.json()["data"]["id"]
-        logger.info("LinkedIn actor started | keyword=%s | run_id=%s", keyword, run_id)
-
-        # ── Step 2: Poll until the run finishes ───────────────────────────────
-        _wait_for_run(run_id, headers)
-
-        # ── Step 3: Fetch results from the run's dataset ──────────────────────
-        dataset_resp = httpx.get(
-            f"{BASE_URL}/actor-runs/{run_id}/dataset/items",
-            headers=headers,
-            params={"format": "json"},
-            timeout=30,
-        )
-        dataset_resp.raise_for_status()
-        items = dataset_resp.json()
-
-        # ── Step 4: Normalize to our standard shape ───────────────────────────
-        for item in items:
-            all_results.append({
-                "raw_title": item.get("title", ""),
-                "raw_company": item.get("companyName", ""),
-                "raw_location": item.get("location", ""),
-                "raw_date": item.get("postedAt", ""),
-                "raw_description": item.get("description", "")[:1000],  # cap length
-                "source": "linkedin",
-                "url": item.get("url", ""),
-            })
+    for item in items:
+        all_results.append({
+            "raw_title": item.get("title", ""),
+            "raw_company": item.get("companyName", ""),
+            "raw_location": item.get("location", ""),
+            "raw_date": item.get("postedAt", ""),
+            "raw_description": item.get("descriptionText", "")[:1000],
+            "source": "linkedin",
+            "url": item.get("link", ""),
+        })
 
     logger.info("LinkedIn: fetched %d postings", len(all_results))
     return all_results
@@ -125,13 +120,4 @@ def _wait_for_run(run_id: str, headers: dict, max_wait: int = 120) -> None:
             timeout=10,
         )
         status_resp.raise_for_status()
-        status = status_resp.json()["data"]["status"]
-
-        if status == "SUCCEEDED":
-            return
-        if status in ("FAILED", "ABORTED", "TIMED-OUT"):
-            raise RuntimeError(f"Apify run {run_id} ended with status: {status}")
-
-        time.sleep(5)  # wait 5 seconds before next poll
-
-    raise TimeoutError(f"Apify run {run_id} did not finish within {max_wait}s")
+        status = status_resp.json()["data"]["s
