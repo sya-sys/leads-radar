@@ -2,6 +2,7 @@
   "raw_count": 80,
   "structured_count": 80,
   "haiku_ok": false,
+  "active_model": "all models failed",
   "haiku_errors": [],
   "sources": {
     "linkedin": 50,
