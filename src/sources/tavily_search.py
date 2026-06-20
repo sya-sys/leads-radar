@@ -72,32 +72,48 @@ def _is_aggregator(url: str) -> bool:
 
 def _parse_francetravail_title(title: str) -> dict:
     """Parse France Travail offer title into job title and location.
-    Format: "Offre d'emploi {JOB} - {DEPT} - {CITY} - {OFFER_ID}"
+
+    Handles Tavily search result titles which may include " | France Travail"
+    or "- France Travail" suffixes, and may or may not have an "Offre d'emploi" prefix.
+
+    France Travail offer IDs always start with 3 digits (e.g. 209FRGQ, 208RYBM).
     """
-    # Pattern with dept code + city + offer ID
+    # Strip attribution suffixes Tavily adds to page titles
+    title = re.sub(r"\s*\|\s*France Travail\s*$", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"\s*-\s*France Travail\s*$", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"\s*\|.*$", "", title).strip()
+
+    def _is_offer_id(s: str) -> bool:
+        """Offer IDs start with 3 digits (e.g. 209FRGQ). City names do not."""
+        return bool(re.match(r"^\d{3}", s))
+
+    # "Offre d'emploi TITLE - DEPT - CITY - OFFER_ID"
     m = re.match(
-        r"Offre[s]? d.emploi\s+(.+?)\s+-\s+(\d{2,3})\s+-\s+([^-]+?)\s+-\s+[A-Z0-9]+$",
-        title, re.IGNORECASE
+        r"Offre[s]? d.emploi\s+(.+?)\s+-\s+(\d{2,3})\s+-\s+([^-]+?)\s+-\s+([A-Z0-9]+)$",
+        title, re.IGNORECASE,
     )
     if m:
         city = m.group(3).strip()
-        # Reject if city looks like an offer ID (all caps + digits)
-        if not re.match(r'^[A-Z0-9]+$', city):
-            return {"parsed_title": m.group(1).strip(), "location": city}
-        return {"parsed_title": m.group(1).strip(), "location": ""}
+        return {"parsed_title": m.group(1).strip(), "location": "" if _is_offer_id(city) else city}
 
-    # Pattern without offer ID at end
+    # "Offre d'emploi TITLE - DEPT - CITY"
     m = re.match(
         r"Offre[s]? d.emploi\s+(.+?)\s+-\s+(\d{2,3})\s+-\s+(.+)$",
-        title, re.IGNORECASE
+        title, re.IGNORECASE,
     )
     if m:
         city = m.group(3).strip()
-        if not re.match(r'^[A-Z0-9]+$', city):
+        return {"parsed_title": m.group(1).strip(), "location": "" if _is_offer_id(city) else city}
+
+    # "TITLE - DEPT - CITY - OFFER_ID" (no Offre d'emploi prefix — Tavily page title format)
+    m = re.match(r"(.+?)\s+-\s+(\d{2,3})\s+-\s+([^-]+?)\s+-\s+([A-Z0-9]+)$", title)
+    if m:
+        city, offer_id = m.group(3).strip(), m.group(4)
+        if _is_offer_id(offer_id) and not _is_offer_id(city):
             return {"parsed_title": m.group(1).strip(), "location": city}
         return {"parsed_title": m.group(1).strip(), "location": ""}
 
-    # "Offre n° ID TITLE"
+    # "Offre n° OFFER_ID TITLE"
     m = re.match(r"Offre\s+n°\s+[A-Z0-9]+\s+(.+)", title, re.IGNORECASE)
     if m:
         return {"parsed_title": m.group(1).strip(), "location": ""}
