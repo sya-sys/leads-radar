@@ -122,12 +122,14 @@ def _parse_francetravail_title(title: str) -> dict:
     m = re.match(r"(.+?)\s+-\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s-]{2,20})\s+-\s+(\d{3}[A-Z0-9]+)$", title)
     if m:
         city = m.group(2).strip()
-        return {"parsed_title": m.group(1).strip(), "location": city}
+        parsed = re.sub(r"^Offre[s]? d.emploi\s+", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
+        return {"parsed_title": parsed, "location": city}
 
-    # "TITLE - OFFER_ID" (just strip dangling offer ID from title)
+    # "TITLE - OFFER_ID" (strip dangling offer ID from title)
     m = re.match(r"(.+?)\s+-\s+(\d{3}[A-Z0-9]+)$", title)
     if m:
-        return {"parsed_title": m.group(1).strip(), "location": ""}
+        parsed = re.sub(r"^Offre[s]? d.emploi\s+", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
+        return {"parsed_title": parsed, "location": ""}
 
     parsed_title = re.sub(r"^Offre[s]? d.emploi\s+", "", title, flags=re.IGNORECASE).strip()
     return {"parsed_title": parsed_title, "location": ""}
