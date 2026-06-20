@@ -1,35 +1,18 @@
 """
 src/extract.py
 ───────────────
-LangGraph node: takes raw job postings → calls Claude Haiku → returns structured leads.
-
-WHY LANGGRAPH HERE?
-  LangGraph lets you build a pipeline as a graph of nodes (steps).
-  Each node receives a "state" dict, does something, and returns an updated state.
-  We use it for the extract → dedupe → output pipeline so the flow is explicit
-  and easy to extend later (e.g. add a "score" node between dedupe and output).
-
-THIS NODE:
-  Input state key:  "raw_leads"  — list of raw dicts from the scrapers
-  Output state key: "leads"      — list of structured dicts ready for deduplication
-
-HOW HAIKU EXTRACTION WORKS:
-  We send each raw posting to Claude Haiku with a prompt asking it to extract
-  the 7 ICP fields as JSON. Haiku is fast and cheap (~$0.00025/1K input tokens).
-  We batch calls to avoid hitting rate limits.
+LangGraph node: raw job postings → Claude Haiku → structured leads.
 """
 
 import json
 import logging
+import os
 
 import anthropic
 
 logger = logging.getLogger(__name__)
 
-# Only Haiku — never Sonnet or Opus (cost constraint)
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
-
-# The 3 signal types we care about. Haiku will pick the closest match.
 SIGNAL_TYPES = ["treasury hire", "payments hire", "AI/fintech hire"]
 
 EXTRACTION_PROMPT = """\
@@ -62,26 +45,61 @@ Rules:
 JSON:"""
 
 
-def extract_node(state: dict) -> dict:
-    """
-    LangGraph node function.
-    Reads state["raw_leads"], writes state["leads"].
-    """
-    raw_leads = state.get("raw_leads", [])
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env automatically
+def _classify_signal(title: str, description: str) -> str:
+    """Keyword fallback when Haiku is unavailable."""
+    text = (title + " " + description).lower()
+    if any(w in text for w in ["treasury", "tresorier", "trésorier", "cash management", "iso 20022"]):
+        return "treasury hire"
+    if any(w in text for w in ["payment", "paiement", "psp", "acquiring", "sepa", "open banking"]):
+        return "payments hire"
+    return "AI/fintech hire"
 
+
+def extract_node(state: dict) -> dict:
+    """LangGraph node: reads raw_leads, writes leads."""
+    raw_leads = state.get("raw_leads", [])
+
+    # Test Anthropic API once before processing all leads
+    haiku_ok = _test_haiku()
+    if not haiku_ok:
+        logger.warning("Haiku unavailable — using keyword fallback for all %d leads", len(raw_leads))
+
+    client = anthropic.Anthropic() if haiku_ok else None
     structured = []
+    haiku_errors = []
+
     for raw in raw_leads:
-        lead = _extract_one(client, raw)
+        lead = _extract_one(client, raw, haiku_errors) if haiku_ok else _fallback(raw)
         if lead:
             structured.append(lead)
 
-    logger.info("Extraction complete: %d/%d leads structured", len(structured), len(raw_leads))
+    logger.info("Extraction complete: %d/%d leads structured (haiku_ok=%s)", len(structured), len(raw_leads), haiku_ok)
+    if haiku_errors:
+        logger.warning("First Haiku error: %s", haiku_errors[0])
+
+    # Write debug file so we can inspect via git
+    _write_debug(raw_leads, structured, haiku_ok, haiku_errors)
+
     return {**state, "leads": structured}
 
 
-def _extract_one(client: anthropic.Anthropic, raw: dict) -> dict | None:
-    """Call Haiku to extract one lead. Returns None on failure."""
+def _test_haiku() -> bool:
+    """Quick API test — returns True if Haiku responds."""
+    try:
+        client = anthropic.Anthropic()
+        client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=5,
+            messages=[{"role": "user", "content": "ok"}],
+        )
+        logger.info("Haiku API test: OK (model=%s)", HAIKU_MODEL)
+        return True
+    except Exception as exc:
+        logger.error("Haiku API test FAILED: %s", exc)
+        return False
+
+
+def _extract_one(client, raw: dict, errors: list) -> dict | None:
     try:
         prompt = EXTRACTION_PROMPT.format(
             raw_title=raw.get("raw_title", ""),
@@ -93,26 +111,53 @@ def _extract_one(client: anthropic.Anthropic, raw: dict) -> dict | None:
             url=raw.get("url", ""),
             signal_types=", ".join(SIGNAL_TYPES),
         )
-
         message = client.messages.create(
             model=HAIKU_MODEL,
-            max_tokens=256,   # JSON response is always short
+            max_tokens=256,
             messages=[{"role": "user", "content": prompt}],
         )
-
-        # Haiku returns the JSON as a text block
         raw_json = message.content[0].text.strip()
         lead = json.loads(raw_json)
-
-        # Validate the signal_type — if Haiku hallucinated one, default it
         if lead.get("signal_type") not in SIGNAL_TYPES:
             lead["signal_type"] = "AI/fintech hire"
-
         return lead
-
-    except json.JSONDecodeError as exc:
-        logger.warning("Haiku returned invalid JSON for '%s': %s", raw.get("raw_title"), exc)
-        return None
     except Exception as exc:
+        if not errors:
+            errors.append(str(exc))
         logger.warning("Extraction failed for '%s': %s", raw.get("raw_title"), exc)
-        return None
+        return _fallback(raw)   # fallback so we never lose a lead
+
+
+def _fallback(raw: dict) -> dict:
+    """Build a structured lead from raw fields without Haiku."""
+    return {
+        "company_name": raw.get("raw_company", ""),
+        "job_title": raw.get("raw_title", ""),
+        "signal_type": _classify_signal(raw.get("raw_title", ""), raw.get("raw_description", "")),
+        "location": raw.get("raw_location", ""),
+        "posting_date": raw.get("raw_date", ""),
+        "source": raw.get("source", ""),
+        "url": raw.get("url", ""),
+    }
+
+
+def _write_debug(raw_leads, structured, haiku_ok, haiku_errors):
+    """Write debug_run.json next to leads.csv for post-run inspection."""
+    try:
+        debug_path = os.path.join(os.path.dirname(__file__), "..", "output", "debug_run.json")
+        os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+        summary = {
+            "raw_count": len(raw_leads),
+            "structured_count": len(structured),
+            "haiku_ok": haiku_ok,
+            "haiku_errors": haiku_errors[:3],
+            "sources": {},
+        }
+        for r in raw_leads:
+            s = r.get("source", "unknown")
+            summary["sources"][s] = summary["sources"].get(s, 0) + 1
+        with open(debug_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        logger.info("Debug summary written to %s", debug_path)
+    except Exception as exc:
+        logger.warning("Could not write debug file: %s", exc)
