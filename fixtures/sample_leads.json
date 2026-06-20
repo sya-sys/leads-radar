@@ -1,0 +1,38 @@
+[
+  {
+    "raw_title": "Trésorier Groupe",
+    "raw_company": "Schneider Electric",
+    "raw_location": "Rueil-Malmaison, France",
+    "raw_date": "2026-06-05",
+    "raw_description": "Nous recrutons un Trésorier Groupe pour piloter la gestion du cash pooling, des placements et des couvertures de change. Expérience Kyriba et ISO 20022 souhaitée.",
+    "source": "linkedin",
+    "url": "https://www.linkedin.com/jobs/view/1234567890"
+  },
+  {
+    "raw_title": "Head of Payments Engineering",
+    "raw_company": "Lyra Network",
+    "raw_location": "Toulouse, France",
+    "raw_date": "2026-06-06",
+    "raw_description": "Looking for a Head of Payments Engineering to lead our SEPA Instant and PSD3 migration. PSP acquiring experience required. ISO 20022 a strong plus.",
+    "source": "france_travail",
+    "url": "https://candidat.francetravail.fr/offres/recherche?offresPartenaires=true&rayonRecherche=0&motsCles=payments"
+  },
+  {
+    "raw_title": "Consultant Fintech & Open Banking",
+    "raw_company": "Capgemini Invent",
+    "raw_location": "Paris, France",
+    "raw_date": "2026-06-07",
+    "raw_description": "Mission de conseil sur les sujets Open Banking, PSD3 et stratégie paiements pour nos clients bancaires. Profil 5-8 ans d'expérience en conseil ou PSP.",
+    "source": "hellowork",
+    "url": "https://www.hellowork.com/fr-fr/emploi/offre-123456.html"
+  },
+  {
+    "raw_title": "AI Product Manager – Cash Management",
+    "raw_company": "BNP Paribas",
+    "raw_location": "Paris, France",
+    "raw_date": "2026-06-08",
+    "raw_description": "Drive AI-powered cash management product for corporate clients. Background in treasury tech or fintech required. Experience with LLM-based forecasting tools a plus.",
+    "source": "tavily",
+    "url": "https://group.bnpparibas/emploi-formation/nos-offres/offre/123456"
+  }
+]

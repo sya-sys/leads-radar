@@ -1,0 +1,19 @@
+# Environment variables — NEVER commit this
+.env
+
+# Python cache files — generated automatically, not needed in the repo
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environment (if you use one locally)
+venv/
+.venv/
+
+# macOS noise
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
