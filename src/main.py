@@ -81,6 +81,22 @@ def _load_fixtures() -> list[dict]:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _write_source_debug(raw_leads: list[dict]) -> None:
+    """Write per-source counts to output/debug_sources.json for every run."""
+    import json as _json
+    import os as _os
+    sources = {}
+    for r in raw_leads:
+        s = r.get("source", "unknown")
+        sources[s] = sources.get(s, 0) + 1
+    debug_path = _os.path.join(_os.path.dirname(__file__), "..", "output", "debug_sources.json")
+    _os.makedirs(_os.path.dirname(debug_path), exist_ok=True)
+    with open(debug_path, "w") as f:
+        _json.dump({"total": len(raw_leads), "by_source": sources}, f, indent=2)
+    logger.info("Source debug: %s", sources)
+
+
+
 def main():
     dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
 
@@ -105,6 +121,9 @@ def main():
         raw_leads += tavily_search.fetch(tavily_key)
 
         logger.info("Total raw leads fetched: %d", len(raw_leads))
+
+    # Always write diagnostic file so we can inspect via git even on empty runs
+    _write_source_debug(raw_leads)
 
     if not raw_leads:
         logger.warning("No raw leads fetched from any source. Exiting.")
