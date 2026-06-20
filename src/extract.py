@@ -1,9 +1,9 @@
 """
 src/extract.py
 ───────────────
-LangGraph node: raw job postings → Gemini Flash → structured leads.
+LangGraph node: raw job postings → Gemini 2.0 Flash → structured leads.
 
-Uses google-generativeai (free tier via Google AI Studio).
+Uses google-genai SDK (the newer replacement for google-generativeai).
 Falls back to keyword classification if Gemini is unavailable.
 """
 
@@ -11,11 +11,11 @@ import json
 import logging
 import os
 
-import google.generativeai as genai
+from google import genai
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 SIGNAL_TYPES = ["treasury hire", "payments hire", "AI/fintech hire"]
 
 EXTRACTION_PROMPT = """\
@@ -64,7 +64,7 @@ def extract_node(state: dict) -> dict:
 
     gemini_ok, active_model, client = _init_gemini()
     if not gemini_ok:
-        logger.warning("Gemini unavailable (%s) — using keyword fallback for %d leads", active_model, len(raw_leads))
+        logger.warning("Gemini unavailable (%s) — keyword fallback for %d leads", active_model, len(raw_leads))
 
     structured = []
     gemini_errors = []
@@ -74,7 +74,7 @@ def extract_node(state: dict) -> dict:
         if lead:
             structured.append(lead)
 
-    logger.info("Extraction: %d/%d leads structured (gemini_ok=%s model=%s)", len(structured), len(raw_leads), gemini_ok, active_model)
+    logger.info("Extraction: %d/%d structured (gemini_ok=%s model=%s)", len(structured), len(raw_leads), gemini_ok, active_model)
     if gemini_errors:
         logger.warning("First Gemini error: %s", gemini_errors[0])
 
@@ -83,23 +83,25 @@ def extract_node(state: dict) -> dict:
 
 
 def _init_gemini() -> tuple[bool, str, object]:
-    """Configure Gemini and verify connectivity. Returns (ok, model_or_error, client)."""
+    """Configure Gemini and verify connectivity."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return False, "GEMINI_API_KEY not set", None
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(GEMINI_MODEL)
+        client = genai.Client(api_key=api_key)
         # Quick connectivity test
-        model.generate_content("ok", generation_config={"max_output_tokens": 5})
+        client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents="ok",
+        )
         logger.info("Gemini API test: OK (model=%s)", GEMINI_MODEL)
-        return True, GEMINI_MODEL, model
+        return True, GEMINI_MODEL, client
     except Exception as exc:
         logger.error("Gemini init FAILED: %s", exc)
-        return False, str(exc)[:120], None
+        return False, str(exc)[:150], None
 
 
-def _extract_one(model, raw: dict, errors: list) -> dict:
+def _extract_one(client, raw: dict, errors: list) -> dict:
     """Call Gemini to extract one lead. Falls back to keyword on failure."""
     try:
         prompt = EXTRACTION_PROMPT.format(
@@ -112,9 +114,9 @@ def _extract_one(model, raw: dict, errors: list) -> dict:
             url=raw.get("url", ""),
             signal_types=", ".join(SIGNAL_TYPES),
         )
-        response = model.generate_content(
-            prompt,
-            generation_config={"max_output_tokens": 256, "temperature": 0},
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
         )
         raw_json = response.text.strip().strip("```json").strip("```").strip()
         lead = json.loads(raw_json)
@@ -129,7 +131,6 @@ def _extract_one(model, raw: dict, errors: list) -> dict:
 
 
 def _fallback(raw: dict) -> dict:
-    """Build a structured lead from raw fields without Gemini."""
     return {
         "company_name": raw.get("raw_company", ""),
         "job_title": raw.get("raw_title", ""),
