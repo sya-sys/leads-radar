@@ -1,8 +1,8 @@
 name: Leads Radar
 
 on:
-  schedule:
-    - cron: "0 6 * * *"
+  # schedule:
+  #   - cron: "0 6 * * *"   # re-enable to resume daily 06:00 UTC runs
   workflow_dispatch:
 
 jobs:
