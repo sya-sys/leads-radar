@@ -13,6 +13,7 @@ import anthropic
 logger = logging.getLogger(__name__)
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
+HAIKU_FALLBACK = "claude-3-5-haiku-20241022"
 SIGNAL_TYPES = ["treasury hire", "payments hire", "AI/fintech hire"]
 
 EXTRACTION_PROMPT = """\
@@ -60,16 +61,16 @@ def extract_node(state: dict) -> dict:
     raw_leads = state.get("raw_leads", [])
 
     # Test Anthropic API once before processing all leads
-    haiku_ok = _test_haiku()
+    haiku_ok, active_model = _test_haiku()
     if not haiku_ok:
-        logger.warning("Haiku unavailable — using keyword fallback for all %d leads", len(raw_leads))
+        logger.warning("Haiku unavailable (%s) — using keyword fallback for all %d leads", active_model, len(raw_leads))
 
     client = anthropic.Anthropic() if haiku_ok else None
     structured = []
     haiku_errors = []
 
     for raw in raw_leads:
-        lead = _extract_one(client, raw, haiku_errors) if haiku_ok else _fallback(raw)
+        lead = _extract_one(client, active_model, raw, haiku_errors) if haiku_ok else _fallback(raw)
         if lead:
             structured.append(lead)
 
@@ -78,28 +79,29 @@ def extract_node(state: dict) -> dict:
         logger.warning("First Haiku error: %s", haiku_errors[0])
 
     # Write debug file so we can inspect via git
-    _write_debug(raw_leads, structured, haiku_ok, haiku_errors)
+    _write_debug(raw_leads, structured, haiku_ok, active_model, haiku_errors)
 
     return {**state, "leads": structured}
 
 
-def _test_haiku() -> bool:
-    """Quick API test — returns True if Haiku responds."""
-    try:
-        client = anthropic.Anthropic()
-        client.messages.create(
-            model=HAIKU_MODEL,
-            max_tokens=5,
-            messages=[{"role": "user", "content": "ok"}],
-        )
-        logger.info("Haiku API test: OK (model=%s)", HAIKU_MODEL)
-        return True
-    except Exception as exc:
-        logger.error("Haiku API test FAILED: %s", exc)
-        return False
+def _test_haiku() -> tuple[bool, str]:
+    """Quick API test — returns (ok, working_model_or_error)."""
+    client = anthropic.Anthropic()
+    for model in [HAIKU_MODEL, HAIKU_FALLBACK]:
+        try:
+            client.messages.create(
+                model=model,
+                max_tokens=5,
+                messages=[{"role": "user", "content": "ok"}],
+            )
+            logger.info("Haiku API test: OK (model=%s)", model)
+            return True, model
+        except Exception as exc:
+            logger.error("Haiku model %s FAILED: %s", model, exc)
+    return False, "all models failed"
 
 
-def _extract_one(client, raw: dict, errors: list) -> dict | None:
+def _extract_one(client, model: str, raw: dict, errors: list) -> dict | None:
     try:
         prompt = EXTRACTION_PROMPT.format(
             raw_title=raw.get("raw_title", ""),
@@ -112,7 +114,7 @@ def _extract_one(client, raw: dict, errors: list) -> dict | None:
             signal_types=", ".join(SIGNAL_TYPES),
         )
         message = client.messages.create(
-            model=HAIKU_MODEL,
+            model=model,
             max_tokens=256,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -141,7 +143,7 @@ def _fallback(raw: dict) -> dict:
     }
 
 
-def _write_debug(raw_leads, structured, haiku_ok, haiku_errors):
+def _write_debug(raw_leads, structured, haiku_ok, active_model, haiku_errors):
     """Write debug_run.json next to leads.csv for post-run inspection."""
     try:
         debug_path = os.path.join(os.path.dirname(__file__), "..", "output", "debug_run.json")
@@ -150,6 +152,7 @@ def _write_debug(raw_leads, structured, haiku_ok, haiku_errors):
             "raw_count": len(raw_leads),
             "structured_count": len(structured),
             "haiku_ok": haiku_ok,
+            "active_model": active_model,
             "haiku_errors": haiku_errors[:3],
             "sources": {},
         }
