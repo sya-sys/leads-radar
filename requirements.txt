@@ -1,18 +1,22 @@
-# ── Core HTTP client (used for all Apify REST calls) ─────────────────────────
+# ── HTTP client (Apify REST calls) ───────────────────────────────────────────
 httpx==0.27.0
 
-# ── Anthropic SDK (Claude Haiku extraction) ───────────────────────────────────
+# ── Gemini extraction (replaces Haiku) ───────────────────────────────────────
 google-genai>=1.0.0
 
-# ── LangGraph (extract → dedupe → output pipeline) ───────────────────────────
+# ── LangGraph pipeline ───────────────────────────────────────────────────────
 langgraph==0.1.5
 
-# ── Tavily (open-web search) ──────────────────────────────────────────────────
+# ── Tavily search + extract ───────────────────────────────────────────────────
 tavily-python==0.3.3
 
 # ── Google Sheets output ──────────────────────────────────────────────────────
 gspread==6.1.2
 google-auth==2.30.0
 
-# ── Env var loading (.env file support for local dev) ────────────────────────
+# ── Streamlit config UI ───────────────────────────────────────────────────────
+streamlit>=1.35.0
+PyGithub>=2.3.0
+
+# ── Env var loading ───────────────────────────────────────────────────────────
 python-dotenv==1.0.1
