@@ -1,0 +1,108 @@
+{
+  "sources": [
+    {
+      "id": "linkedin",
+      "enabled": true,
+      "tool": "apify",
+      "actor": "curious_coder~linkedin-jobs-scraper",
+      "queries": [
+        "treasury director France",
+        "head of payments France",
+        "responsable trÃ©sorerie France",
+        "directeur trÃ©sorerie France",
+        "payment operations manager France"
+      ],
+      "max_results": 50,
+      "date_posted": "past-week"
+    },
+    {
+      "id": "france_travail",
+      "enabled": true,
+      "tool": "tavily",
+      "site": "candidat.francetravail.fr/offres/recherche/detail",
+      "queries": [
+        "tresorier",
+        "responsable tresorerie",
+        "responsable paiements fintech",
+        "head of payments"
+      ],
+      "results_per_query": 5
+    },
+    {
+      "id": "hellowork",
+      "enabled": true,
+      "tool": "tavily",
+      "site": "hellowork.com/fr-fr/emplois",
+      "queries": [
+        "tresorier responsable tresorerie",
+        "head of payments fintech",
+        "tresorerie paiements"
+      ],
+      "results_per_query": 5
+    },
+    {
+      "id": "malt",
+      "enabled": false,
+      "tool": "tavily",
+      "site": "malt.fr/project",
+      "queries": [
+        "mission tresorerie consultant",
+        "mission paiements fintech consultant",
+        "mission cash management"
+      ],
+      "results_per_query": 5
+    },
+    {
+      "id": "boamp",
+      "enabled": false,
+      "tool": "tavily",
+      "site": "boamp.fr",
+      "queries": [
+        "tresorerie cash management",
+        "systeme information financier paiements",
+        "audit financier tresorerie"
+      ],
+      "results_per_query": 5
+    }
+  ],
+  "extraction": {
+    "model": "gemini-2.0-flash",
+    "signal_types": ["treasury hire", "payments hire", "AI/fintech hire"],
+    "description_max_chars": 1200
+  },
+  "output": {
+    "columns": [
+      "company_name",
+      "company_sector",
+      "company_size",
+      "job_title",
+      "seniority",
+      "contract_type",
+      "is_new_role",
+      "tech_mentioned",
+      "transformation_context",
+      "signal_type",
+      "project_type",
+      "service_offer",
+      "icp_score",
+      "urgency",
+      "location",
+      "posting_date",
+      "source",
+      "url",
+      "outreach_status",
+      "contact_name",
+      "notes",
+      "opportunity_type"
+    ],
+    "crm_columns": ["outreach_status", "contact_name", "notes", "opportunity_type"]
+  },
+  "schedule": {
+    "enabled": false,
+    "cron": "0 6 * * *",
+    "timezone": "UTC"
+  },
+  "alerts": {
+    "min_leads_threshold": 3
+  }
+}
