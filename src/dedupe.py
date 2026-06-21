@@ -1,24 +1,19 @@
 """
 src/dedupe.py
 ──────────────
-LangGraph node: removes duplicate leads.
+LangGraph node: removes duplicate leads within a run and vs. existing CSV.
+Plus: CRM-safe merge — never overwrites rows that already have CRM data.
 
-HOW DEDUPLICATION WORKS:
-  For each lead, we build a "fingerprint" — a hash of three fields:
-    company_name + job_title + posting_date
+DEDUPLICATION:
+  Fingerprint = sha256(company_name + job_title + posting_date + url).
+  Same job reposted with new URL → different fingerprint (URL changes) → re-added.
+  Same URL seen twice → deduplicated.
 
-  If two leads from different sources describe the same job at the same company
-  on the same date, they'll produce the same hash and one will be dropped.
-
-  We also load the existing leads.csv (if it exists) and deduplicate against it,
-  so we never add a job we already saw in a previous run.
-
-WHY NOT A DATABASE?
-  For this volume (hundreds of leads/month), a CSV is plenty.
-  No Postgres, no SQLite, no infrastructure to manage.
-
-Input state key:  "leads"         — list of structured lead dicts
-Output state key: "new_leads"     — deduplicated list (only leads not seen before)
+CRM-SAFE MERGE (merge_and_write):
+  1. Read existing CSV into dict keyed by URL.
+  2. For each new lead, skip if URL already exists (CRM data preserved).
+  3. Rewrite full CSV: existing rows (with CRM cols intact) + new rows.
+  4. On schema change (old CSV has fewer columns), new columns get empty strings.
 """
 
 import csv
@@ -28,30 +23,16 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Path to the CSV that persists across runs (committed to the repo)
 OUTPUT_CSV = os.path.join(os.path.dirname(__file__), "..", "output", "leads.csv")
-
-CSV_FIELDS = [
-    "company_name",
-    "job_title",
-    "signal_type",
-    "location",
-    "posting_date",
-    "source",
-    "url",
-]
 
 
 def dedupe_node(state: dict) -> dict:
-    """
-    LangGraph node function.
-    Reads state["leads"], writes state["new_leads"].
-    """
+    """LangGraph node. Reads state['leads'], writes state['new_leads']."""
     leads = state.get("leads", [])
     existing_hashes = _load_existing_hashes()
 
     new_leads = []
-    seen_this_run = set()
+    seen_this_run: set[str] = set()
 
     for lead in leads:
         h = _fingerprint(lead)
@@ -62,17 +43,13 @@ def dedupe_node(state: dict) -> dict:
         new_leads.append(lead)
 
     logger.info(
-        "Deduplication: %d input → %d new leads (%d existing, %d dupes within run)",
-        len(leads),
-        len(new_leads),
-        len(existing_hashes),
-        len(leads) - len(new_leads),
+        "Deduplication: %d input → %d new leads (%d existing hashes, %d dupes this run)",
+        len(leads), len(new_leads), len(existing_hashes), len(leads) - len(new_leads),
     )
     return {**state, "new_leads": new_leads}
 
 
 def _fingerprint(lead: dict) -> str:
-    """Create a stable hash from company + title + date."""
     key = "|".join([
         lead.get("company_name", "").strip().lower(),
         lead.get("job_title", "").strip().lower(),
@@ -83,39 +60,62 @@ def _fingerprint(lead: dict) -> str:
 
 
 def _load_existing_hashes() -> set[str]:
-    """Read the existing CSV and build a set of known fingerprints."""
-    hashes = set()
+    hashes: set[str] = set()
     if not os.path.exists(OUTPUT_CSV):
-        return hashes  # first run — nothing to compare against
-
+        return hashes
     with open(OUTPUT_CSV, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             hashes.add(_fingerprint(row))
-
     logger.info("Loaded %d existing lead hashes from CSV", len(hashes))
     return hashes
 
 
+def merge_and_write(new_leads: list[dict], columns: list[str], crm_columns: list[str]) -> int:
+    """
+    CRM-safe merge:
+    - Read all existing rows (preserving CRM column values).
+    - Skip new leads whose URL already exists.
+    - Rewrite full CSV with all rows (existing + new).
+    - Missing columns from old schema get empty strings (safe schema migration).
+
+    Returns number of truly new rows added.
+    """
+    existing_by_url: dict[str, dict] = {}
+
+    if os.path.exists(OUTPUT_CSV):
+        with open(OUTPUT_CSV, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                url = row.get("url", "").strip()
+                if url:
+                    existing_by_url[url] = dict(row)
+
+    added = 0
+    for lead in new_leads:
+        url = lead.get("url", "").strip()
+        if not url or url in existing_by_url:
+            continue
+        # Ensure CRM columns are always empty on new rows
+        for col in crm_columns:
+            lead.setdefault(col, "")
+        existing_by_url[url] = lead
+        added += 1
+
+    os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore", restval="")
+        writer.writeheader()
+        for row in existing_by_url.values():
+            writer.writerow(row)
+
+    logger.info("Wrote %d total rows to %s (%d new)", len(existing_by_url), OUTPUT_CSV, added)
+    return added
+
+
+# Legacy alias — keeps DRY_RUN path in main.py working if still referenced
 def write_csv(new_leads: list[dict]) -> int:
-    """
-    Append new leads to the CSV file.
-    Creates the file with a header if it doesn't exist yet.
-    Returns the number of rows written.
-    """
-    if not new_leads:
-        logger.info("No new leads to write.")
-        return 0
-
-    file_exists = os.path.exists(OUTPUT_CSV)
-
-    with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
-
-        if not file_exists:
-            writer.writeheader()  # write column names on first run
-
-        writer.writerows(new_leads)
-
-    logger.info("Wrote %d new leads to %s", len(new_leads), OUTPUT_CSV)
-    return len(new_leads)
+    """Deprecated: use merge_and_write. Kept for backward compat."""
+    from src.config_loader import load_config, get_columns, get_crm_columns
+    config = load_config()
+    return merge_and_write(new_leads, get_columns(config), get_crm_columns(config))
