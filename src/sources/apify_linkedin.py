@@ -14,7 +14,6 @@ No Apify SDK — keeps our dependency list minimal.
 """
 
 import logging
-import os
 import time
 
 import httpx
@@ -31,7 +30,6 @@ ACTOR_ID = "curious_coder/linkedin-jobs-scraper"
 BASE_URL = "https://api.apify.com/v2"
 
 # LinkedIn Jobs search URLs — last 24 hours (f_TPR=r86400), France.
-# To regenerate: open LinkedIn Jobs in incognito, apply filters, copy URL.
 SEARCH_URLS = [
     "https://www.linkedin.com/jobs/search/?keywords=treasury+director&location=France&f_TPR=r86400",
     "https://www.linkedin.com/jobs/search/?keywords=head+of+payments&location=France&f_TPR=r86400",
@@ -46,7 +44,7 @@ SEARCH_URLS = [
 MAX_RESULTS = 50
 
 
-def fetch(apify_token: str) -> list[dict]:
+def fetch(apify_token: str, source_config: dict | None = None) -> list[dict]:
     """
     Run the LinkedIn Jobs actor on Apify and return raw job postings.
 
@@ -65,14 +63,14 @@ def fetch(apify_token: str) -> list[dict]:
 def _run_actor(token: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}"}
 
-    # ── Step 1: Start a single actor run with all search URLs ─────────────────
+    # Step 1: Start a single actor run with all search URLs
     run_resp = httpx.post(
         f"{BASE_URL}/acts/{ACTOR_ID}/runs",
         headers=headers,
         json={
             "urls": SEARCH_URLS,
             "count": MAX_RESULTS,
-            "scrapeCompany": False,   # skip company details to run faster
+            "scrapeCompany": False,
         },
         timeout=30,
     )
@@ -80,10 +78,10 @@ def _run_actor(token: str) -> list[dict]:
     run_id = run_resp.json()["data"]["id"]
     logger.info("LinkedIn actor started | run_id=%s | urls=%d", run_id, len(SEARCH_URLS))
 
-    # ── Step 2: Poll until the run finishes ───────────────────────────────────
+    # Step 2: Poll until the run finishes
     _wait_for_run(run_id, headers)
 
-    # ── Step 3: Fetch results from the run's dataset ──────────────────────────
+    # Step 3: Fetch results from the run's dataset
     dataset_resp = httpx.get(
         f"{BASE_URL}/actor-runs/{run_id}/dataset/items",
         headers=headers,
@@ -93,7 +91,7 @@ def _run_actor(token: str) -> list[dict]:
     dataset_resp.raise_for_status()
     items = dataset_resp.json()
 
-    # ── Step 4: Normalize to our standard shape ───────────────────────────────
+    # Step 4: Normalize to our standard shape
     all_results = []
     for item in items:
         all_results.append({
@@ -127,6 +125,6 @@ def _wait_for_run(run_id: str, headers: dict, max_wait: int = 120) -> None:
         if status in ("FAILED", "ABORTED", "TIMED-OUT"):
             raise RuntimeError(f"Apify run {run_id} ended with status: {status}")
 
-        time.sleep(5)  # wait 5 seconds before next poll
+        time.sleep(5)
 
     raise TimeoutError(f"Apify run {run_id} did not finish within {max_wait}s")
