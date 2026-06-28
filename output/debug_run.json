@@ -7,9 +7,7 @@
     "france_travail": 15,
     "hellowork": 15
   },
-  "errors": [
-    "Source 'linkedin' failed: fetch() takes 1 positional argument but 2 were given"
-  ],
+  "errors": [],
   "dry_run": false,
   "extraction_model": "gemini-2.0-flash"
 }
